@@ -31,11 +31,11 @@ The app is a decision-support prototype. Its crop screen does not predict yield,
    streamlit run app.py
    ```
 
-The first online leaf screening downloads the open-source model. Once the model is present in the local Hugging Face cache, Offline mode can use it without downloading files. The model card describes 38 PlantVillage classes; the app checks the selected crop against those labels and does not force a result for an unsupported crop. Its displayed class score is not diagnostic certainty. See the [model card](https://huggingface.co/linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification).
+The first online leaf screening downloads the open-source model. Once the model is present in the local Hugging Face cache, Offline mode can use it without downloading files. The model card describes 38 PlantVillage classes; the app checks the selected crop against those labels, uses the model's saved image processor, and preserves each class probability across all model classes when filtering to a crop. Unsupported crops are not forced into a result. A displayed class score is not diagnostic certainty. See the [model card](https://huggingface.co/linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification).
 
 ## Configuration
 
-- `APP_PUBLIC_URL`: optional HTTPS URL used to prefill the Share app page before generating a QR code.
+- The Share page detects the URL currently used to open the app and generates its QR code automatically; no URL setting or manual paste is needed. Use the Copy link button to put that same address on the clipboard.
 - `TERRASENSE_DB_PATH`: optional path for the SQLite database. By default, the app creates `terrasense.db` beside `app.py`. Existing `cropwise.db` files and the older `CROPWISE_DB_PATH` setting remain recognized so saved local history can continue to work.
 
 The database stores usernames, salted password hashes, saved history, and cached field values. Uploaded leaf images are not written to the database. A hosted installation needs persistent, access-controlled storage for durable account history. Treat the local account flow as a prototype until production security, backups, password recovery, and retention policies are reviewed.

@@ -1,7 +1,6 @@
 import html
 import io
 import json
-import os
 import textwrap
 from pathlib import Path
 
@@ -105,6 +104,9 @@ if "planner_lon" not in st.session_state:
 
 if "planner_point_selected" not in st.session_state:
     st.session_state.planner_point_selected = False
+
+if "planner_point_source" not in st.session_state:
+    st.session_state.planner_point_source = None
 
 if "planner_map_generation" not in st.session_state:
     st.session_state.planner_map_generation = 0
@@ -220,58 +222,25 @@ def factor_status(score):
     return "Poor"
 
 
-def field_result_summary(crop, verdict, score, factors=None):
+def field_result_summary(crop, verdict, score, factors=None, language="en"):
     """Turn the screening result into a short, farmer-facing explanation."""
     if verdict == "Unknown":
-        return (
-            f"There is not enough climate or soil information to assess {crop}. "
-            "Add local values or reconnect to refresh the field data, then try again."
-        )
+        return tr("field_unknown", language).format(crop=crop)
 
-    score_text = f" The screening score is {score_percent(score)}%." if score is not None else ""
-
-    if verdict == "Suitable":
-        return (
-            f"The available climate and soil indicators are broadly within the "
-            f"screening ranges for {crop}.{score_text} Check local planting dates, "
-            "water access, and field conditions before making a planting decision."
-        )
-
-    if verdict == "Marginal":
-        review_factors = [
-            name.lower()
-            for name, factor in (factors or {}).items()
-            if factor.get("score") is not None and factor["score"] < 0.8
-        ]
-        review_text = (
-            "Review " + ", ".join(review_factors) + " against local conditions. "
-            if review_factors
-            else "Review the factor breakdown against local conditions. "
-        )
-        return (
-            f"Some available conditions fit {crop}, while others are outside its "
-            f"preferred ranges.{score_text} {review_text}Local advice can help "
-            "determine whether the crop is practical for this field."
-        )
-
-    return (
-        f"The available field indicators are outside the screening ranges for "
-        f"{crop}.{score_text} Consider comparing other crops and confirm the "
-        "location and data before deciding."
-    )
+    template_key = {
+        "Suitable": "field_suitable",
+        "Marginal": "field_marginal",
+        "Not suitable": "field_unsuitable",
+    }.get(verdict, "field_unknown")
+    return tr(template_key, language).format(crop=crop, score=score_percent(score))
 
 
-def leaf_result_summary(plant, disease, match_score):
+def leaf_result_summary(plant, disease, match_score, language="en"):
     """Describe the model's crop-specific class without presenting it as a diagnosis."""
-    score_text = f" The model match score is {match_score * 100:.1f}%."
-    if disease == "Healthy":
-        return (
-            f"For the selected crop, the model's closest class is a healthy-looking {plant} leaf."
-            f"{score_text} This screen cannot confirm the plant species or rule out disease; keep monitoring the plant."
-        )
-    return (
-        f"For the selected crop, the model's closest class is {disease} on {plant}.{score_text} "
-        "This is a limited visual screening, not a confirmed diagnosis. Ask local agricultural support to confirm the cause before treatment."
+    return tr("disease_result", language).format(
+        plant=plant,
+        disease=disease,
+        score=f"{match_score * 100:.1f}",
     )
 
 
@@ -298,17 +267,35 @@ def voice_field_summary(analysis):
     score = analysis.get("score")
     climate = analysis.get("climate", {})
     soil = analysis.get("soil", {})
-    summary = field_result_summary(crop, verdict, score, analysis.get("factors"))
+    language = st.session_state.language
+    summary = field_result_summary(crop, verdict, score, analysis.get("factors"), language)
     details = []
-    for key, label, unit in (("temp_c", "average temperature", "degrees Celsius"), ("rain_mm_year", "annual rainfall", "millimeters per year"),):
+    for key in ("temp_c", "rain_mm_year"):
         value = climate.get(key)
         if value is not None:
-            details.append(f"{label} {float(value):.1f} {unit}" if key == "temp_c" else f"{label} {float(value):.0f} {unit}")
+            if key == "temp_c":
+                details.append(
+                    f"{tr('temperature', language)} {float(value):.1f} "
+                    f"{tr('degrees_celsius', language)}"
+                )
+            else:
+                details.append(
+                    f"{tr('rainfall', language)} {float(value):.0f} "
+                    f"{tr('millimeters_per_year', language)}"
+                )
     if soil.get("ph") is not None:
-        details.append(f"soil pH {float(soil['ph']):.2f}")
+        details.append(f"{tr('soil_ph', language)} {float(soil['ph']):.2f}")
     if soil.get("elevation_m") is not None:
-        details.append(f"terrain elevation {float(soil['elevation_m']):.0f} meters")
-    return " ".join([summary, *details, tr("screening_warning", st.session_state.language)])
+        details.append(
+            f"{tr('elevation', language)} {float(soil['elevation_m']):.0f} "
+            f"{tr('meters', language)}"
+        )
+    if soil.get("slope_pct") is not None:
+        details.append(
+            f"{tr('slope', language)} {float(soil['slope_pct']):.1f} "
+            f"{tr('percent', language)}"
+        )
+    return ". ".join([summary, *details, tr("screening_warning", language)])
 
 
 def format_factor_value(value, unit):
@@ -351,13 +338,37 @@ def sync_field_coordinates():
     st.session_state.field_point_selected = True
     st.session_state.location_auto_start = False
     st.session_state.field_map_generation += 1
-    if not st.session_state.planner_point_selected:
-        st.session_state.planner_lat = latitude
-        st.session_state.planner_lon = longitude
-        st.session_state.planner_lat_input = latitude
-        st.session_state.planner_lon_input = longitude
-        st.session_state.planner_point_selected = True
+    sync_planner_from_field(latitude, longitude)
     reset_analysis()
+
+
+def sync_planner_from_field(latitude, longitude):
+    """Keep the planting map centered on the latest field-map selection."""
+    coordinates = (round(float(latitude), 5), round(float(longitude), 5))
+    st.session_state.planner_lat = float(latitude)
+    st.session_state.planner_lon = float(longitude)
+    st.session_state.planner_lat_input = float(latitude)
+    st.session_state.planner_lon_input = float(longitude)
+    st.session_state.planner_last_map_click = coordinates
+    st.session_state.planner_point_selected = True
+    st.session_state.planner_point_source = "field"
+    st.session_state.planner_map_generation += 1
+    st.session_state.crop_results = None
+
+
+def clear_field_linked_planner_point():
+    """Clear the planting point only when it was inherited from the field map."""
+    if st.session_state.get("planner_point_source") != "field":
+        return
+    st.session_state.planner_point_source = None
+    st.session_state.planner_point_selected = False
+    st.session_state.planner_lat = DEFAULT_LAT
+    st.session_state.planner_lon = DEFAULT_LON
+    st.session_state.planner_lat_input = DEFAULT_LAT
+    st.session_state.planner_lon_input = DEFAULT_LON
+    st.session_state.planner_last_map_click = None
+    st.session_state.planner_map_generation += 1
+    st.session_state.crop_results = None
 
 
 def sync_planner_coordinates():
@@ -367,6 +378,7 @@ def sync_planner_coordinates():
     st.session_state.planner_lon = longitude
     st.session_state.planner_last_map_click = (round(latitude, 5), round(longitude, 5))
     st.session_state.planner_point_selected = True
+    st.session_state.planner_point_source = "planner"
     st.session_state.planner_map_generation += 1
     st.session_state.crop_results = None
 
@@ -433,29 +445,60 @@ def cached_disease_model(offline):
 
 
 def render_voice_button(message):
-    language = {"en": "en-US", "ar": "ar-SA", "zh": "zh-CN", "fr": "fr-FR", "ru": "ru-RU", "es": "es-ES"}.get(st.session_state.language, "en-US")
+    locale = {
+        "en": "en-US",
+        "ar": "ar-SA",
+        "zh": "zh-CN",
+        "fr": "fr-FR",
+        "ru": "ru-RU",
+        "es": "es-ES",
+    }.get(st.session_state.language, "en-US")
     safe_message = json.dumps(message, ensure_ascii=False).replace("</", "<\\/")
+    labels = {
+        "idle": tr("read_aloud", st.session_state.language),
+        "playing": tr("stop_reading", st.session_state.language),
+        "unavailable": tr("voice_unavailable", st.session_state.language),
+    }
+    safe_labels = json.dumps(labels, ensure_ascii=False).replace("</", "<\\/")
     components.html(
-        f"""<button type="button" aria-label="Read guidance aloud" aria-pressed="false" style="
+        f"""<button type="button" aria-label="{html.escape(labels['idle'])}" aria-pressed="false" style="
             background:#174d38;color:white;border:0;border-radius:8px;
             padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer">
-            Read this guidance aloud
+            {html.escape(labels['idle'])}
         </button>
         <script>
         const button = document.currentScript.previousElementSibling;
+        const labels = {safe_labels};
+        const locale = '{locale}';
         let activeUtterance = null;
         let isPlaying = false;
-        const idleLabel = 'Read this guidance aloud';
-        const playingLabel = 'Stop reading';
         function setPlaying(value) {{
           isPlaying = value;
-          button.textContent = value ? playingLabel : idleLabel;
-          button.setAttribute('aria-label', value ? playingLabel : idleLabel);
+          button.textContent = value ? labels.playing : labels.idle;
+          button.setAttribute('aria-label', value ? labels.playing : labels.idle);
           button.setAttribute('aria-pressed', value ? 'true' : 'false');
         }}
-        button.addEventListener('click', () => {{
+        function findVoice(voices) {{
+          const requested = locale.toLowerCase();
+          const languageCode = requested.split('-')[0];
+          return voices.find(voice => voice.lang.toLowerCase() === requested)
+            || voices.find(voice => voice.lang.toLowerCase().split('-')[0] === languageCode);
+        }}
+        async function matchingVoice() {{
+          const voices = window.speechSynthesis.getVoices();
+          if (voices.length) return findVoice(voices);
+          await new Promise(resolve => {{
+            const timeout = window.setTimeout(resolve, 1200);
+            window.speechSynthesis.addEventListener('voiceschanged', () => {{
+              window.clearTimeout(timeout);
+              resolve();
+            }}, {{ once: true }});
+          }});
+          return findVoice(window.speechSynthesis.getVoices());
+        }}
+        button.addEventListener('click', async () => {{
           if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {{
-            button.textContent = 'Voice playback is unavailable';
+            button.textContent = labels.unavailable;
             return;
           }}
           if (isPlaying) {{
@@ -465,9 +508,18 @@ def render_voice_button(message):
             return;
           }}
           window.speechSynthesis.cancel();
+          const voice = await matchingVoice();
+          if (!voice) {{
+            button.textContent = labels.unavailable;
+            button.setAttribute('aria-label', labels.unavailable);
+            button.setAttribute('aria-pressed', 'false');
+            window.setTimeout(() => setPlaying(false), 2500);
+            return;
+          }}
           const utterance = new SpeechSynthesisUtterance({safe_message});
           activeUtterance = utterance;
-          utterance.lang = '{language}';
+          utterance.voice = voice;
+          utterance.lang = voice.lang || locale;
           utterance.onend = () => {{ if (activeUtterance === utterance) setPlaying(false); }};
           utterance.onerror = () => {{ if (activeUtterance === utterance) setPlaying(false); }};
           setPlaying(true);
@@ -475,6 +527,59 @@ def render_voice_button(message):
         }});
         </script>""",
         height=54,
+    )
+
+
+def render_copy_link_button(url):
+    label = tr("copy_link", st.session_state.language)
+    copied_label = tr("link_copied", st.session_state.language)
+    failed_label = tr("copy_failed", st.session_state.language)
+    safe_url = json.dumps(url, ensure_ascii=False).replace("</", "<\\/")
+    labels = json.dumps(
+        {"copied": copied_label, "failed": failed_label},
+        ensure_ascii=False,
+    ).replace("</", "<\\/")
+    components.html(
+        f"""<button id="copy-app-link" type="button" style="
+            background:#174d38;color:white;border:0;border-radius:8px;
+            padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer">
+            {html.escape(label)}
+        </button>
+        <span id="copy-app-link-status" role="status" aria-live="polite"
+            style="display:block;min-height:1.2em;margin-top:4px"></span>
+        <script>
+        const button = document.getElementById('copy-app-link');
+        const status = document.getElementById('copy-app-link-status');
+        const appUrl = {safe_url};
+        const messages = {labels};
+        async function copyAppLink() {{
+          let copied = false;
+          try {{
+            await window.parent.navigator.clipboard.writeText(appUrl);
+            copied = true;
+          }} catch (error) {{
+            try {{
+              const field = document.createElement('textarea');
+              field.value = appUrl;
+              field.style.position = 'fixed';
+              field.style.opacity = '0';
+              document.body.appendChild(field);
+              field.focus();
+              field.select();
+              copied = document.execCommand('copy');
+              field.remove();
+            }} catch (fallbackError) {{
+              copied = false;
+            }}
+          }}
+          status.textContent = copied ? messages.copied : messages.failed;
+          if (copied) {{
+            window.setTimeout(() => {{ status.textContent = ''; }}, 2500);
+          }}
+        }}
+        button.addEventListener('click', copyAppLink);
+        </script>""",
+        height=72,
     )
 
 
@@ -817,12 +922,7 @@ if st.session_state.page == "map":
             st.session_state.field_point_selected = True
             st.session_state.location_auto_start = False
             st.session_state.field_map_generation += 1
-            if not st.session_state.planner_point_selected:
-                st.session_state.planner_lat = new_lat
-                st.session_state.planner_lon = new_lon
-                st.session_state.planner_lat_input = new_lat
-                st.session_state.planner_lon_input = new_lon
-                st.session_state.planner_point_selected = True
+            sync_planner_from_field(new_lat, new_lon)
             reset_analysis()
             st.rerun()
 
@@ -845,6 +945,7 @@ if st.session_state.page == "map":
             st.session_state.lon = DEFAULT_LON
             st.session_state.latitude_input = DEFAULT_LAT
             st.session_state.longitude_input = DEFAULT_LON
+            clear_field_linked_planner_point()
             reset_analysis()
             st.rerun()
 
@@ -915,6 +1016,7 @@ if st.session_state.page == "map":
             st.session_state.field_point_selected = False
             st.session_state.location_auto_start = False
             st.session_state.field_map_generation += 1
+            clear_field_linked_planner_point()
 
             reset_analysis()
 
@@ -1093,6 +1195,7 @@ if st.session_state.page == "map":
                 verdict,
                 score,
                 analysis.get("factors"),
+                language=language,
             )
         )
 
@@ -1160,7 +1263,8 @@ if st.session_state.page == "map":
     else:
         render_voice_button(
             tr("map_intro", language)
-            + " Choose a point on the map to review climate, soil, and terrain signals."
+            + " "
+            + tr("point_instruction", language)
         )
 
 
@@ -1177,9 +1281,13 @@ elif st.session_state.page == "planner":
     finder = st.session_state.get("crop_results")
     if not isinstance(finder, dict) or not finder.get("results"):
         point_note = (
-            f" Selected point: {st.session_state.planner_lat:.5f}, {st.session_state.planner_lon:.5f}."
+            " "
+            + tr("point_selected", language).format(
+                lat=f"{st.session_state.planner_lat:.5f}",
+                lon=f"{st.session_state.planner_lon:.5f}",
+            )
             if st.session_state.planner_point_selected
-            else " Select a location on the map to start."
+            else " " + tr("point_instruction", language)
         )
         render_voice_button(tr("planner_intro", language) + point_note)
 
@@ -1216,6 +1324,7 @@ elif st.session_state.page == "planner":
         st.session_state.planner_lat_input = planner_coordinates[0]
         st.session_state.planner_lon_input = planner_coordinates[1]
         st.session_state.planner_point_selected = True
+        st.session_state.planner_point_source = "planner"
         st.session_state.planner_map_generation += 1
         st.session_state.crop_results = None
         st.rerun()
@@ -1235,6 +1344,7 @@ elif st.session_state.page == "planner":
         disabled=not st.session_state.planner_point_selected,
     ):
         st.session_state.planner_point_selected = False
+        st.session_state.planner_point_source = None
         st.session_state.planner_map_generation += 1
         st.session_state.planner_last_map_click = None
         st.session_state.planner_lat = DEFAULT_LAT
@@ -1357,6 +1467,7 @@ elif st.session_state.page == "planner":
                     best_result["crop"],
                     best_result["verdict"],
                     best_result["score"],
+                    language=language,
                 )
             )
             st.subheader("Matching crops")
@@ -1404,17 +1515,23 @@ elif st.session_state.page == "planner":
             st.warning(tr("screening_warning", language))
             voice_parts = [
                 tr("planner_intro", language),
-                field_result_summary(best_result["crop"], best_result["verdict"], best_result["score"]),
-                "Highest screened crops: " + "; ".join(
-                    f"{item['crop']}, {item['verdict']}, {score_percent(item['score'])} percent"
+                field_result_summary(
+                    best_result["crop"],
+                    best_result["verdict"],
+                    best_result["score"],
+                    language=language,
+                ),
+                tr("top_crops", language) + ": " + "; ".join(
+                    f"{item['crop']}, {score_percent(item['score'])}%"
                     for item in results[:5]
                 ),
-                f"Companion plan for {main_crop}.",
+                tr("companion_plan", language).format(crop=main_crop),
             ]
             if companion_options:
-                voice_parts.extend(
-                    f"{item['crop']}: {item['why']} Management: {item['manage']}"
-                    for item in companion_options
+                voice_parts.append(
+                    tr("companion_crops", language).format(
+                        crops=", ".join(item["crop"] for item in companion_options)
+                    )
                 )
             voice_parts.append(tr("screening_warning", language))
             render_voice_button(" ".join(voice_parts))
@@ -1538,14 +1655,13 @@ elif st.session_state.page == "doctor":
         best = disease_results[0]
         if best.get("unsupported_crop"):
             supported = ", ".join(best.get("supported_plants", [])) or "the crops listed by the model"
-            message = (
-                f"This model has no trained class for {best['plant']}, so it cannot screen this crop reliably. "
-                "We have not assigned a disease label or treatment. Choose a supported crop only if it matches the photo, "
-                "or ask local agricultural support for help."
+            message = tr("unsupported_crop", language).format(
+                plant=best["plant"],
+                supported=supported,
             )
             st.warning(message)
             st.caption(f"Crops represented in the model: {supported}.")
-            render_voice_button(message + f" Crops represented in the model include: {supported}.")
+            render_voice_button(message + " " + tr("screening_warning", language))
         else:
             disease = best["disease"]
             plant = best["plant"]
@@ -1554,33 +1670,38 @@ elif st.session_state.page == "doctor":
 
             st.subheader("Plain-language result")
             if disease == "Unknown" or plant == "Unknown crop":
-                result_text = (
-                    "The model returned a label this app could not interpret. No plant or disease is identified, "
-                    "and no treatment steps are suggested. Try a clear photo or ask local agricultural support."
-                )
+                result_text = tr("disease_unknown", language)
             elif is_uncertain_crop:
-                result_text = (
-                    f"The model's closest trained class is {disease} on {plant}. "
-                    "Because the crop was not selected, this is only a broad nearest-class result and may not apply to the plant in the photo."
+                result_text = tr("disease_uncertain", language).format(
+                    disease=disease,
+                    plant=plant,
                 )
             else:
-                result_text = leaf_result_summary(plant, disease, confidence)
+                result_text = leaf_result_summary(plant, disease, confidence, language)
             st.write(result_text)
 
             if disease != "Unknown" and plant != "Unknown crop":
                 st.metric("Model class score", f"{confidence * 100:.1f}%")
-                st.caption("This score is the model's class match, not diagnostic certainty. Crop-specific scores are compared only within that crop's trained labels.")
+                st.caption("This is the model's overall class probability, not diagnostic certainty. The result list is filtered to the selected crop.")
 
             st.subheader(tr("treatment_title", language))
             if disease == "Unknown":
-                treatment_text = "The model label could not be interpreted, so no treatment steps are suggested."
+                treatment_text = tr("disease_unknown", language)
                 st.info(treatment_text)
             else:
                 treatment_text = first_steps(disease)
                 st.info(treatment_text)
             st.caption("The image is used for this screening and is not written to the history database. Hosted deployments still receive the upload for local inference.")
             st.caption("General first steps follow [University of Minnesota Extension disease-prevention guidance](https://extension.umn.edu/garden-and-home/yard-and-garden/gardening-in-minnesota/yard-and-garden-problems/preventing-plant-diseases-in-the-garden). See [UC IPM tomato mosaic guidance](https://ipm.ucanr.edu/agriculture/tomato/tobacco-mosaic/) and [Oregon State Extension apple scab guidance](https://extension.oregonstate.edu/es/node/123546/printable/print) for those examples. Local diagnosis and treatment rules vary.")
-            render_voice_button(f"{result_text} {treatment_text} {tr('screening_warning', language)}")
+            render_voice_button(
+                " ".join(
+                    (
+                        result_text,
+                        tr("disease_next_steps", language),
+                        tr("screening_warning", language),
+                    )
+                )
+            )
 
             if len(disease_results) > 1:
                 with st.expander("Other possibilities"):
@@ -1601,7 +1722,7 @@ elif st.session_state.page == "history":
     history_voice = [tr("history_intro", language)]
     if not st.session_state.username:
         st.info("Sign in from the sidebar to view saved activity. Guest activity remains only in the current session.")
-        history_voice.append("Sign in with a local account to view saved activity.")
+        history_voice.append(tr("history_login", language))
     elif not DB_READY:
         st.error("Local history storage is unavailable on this installation.")
         history_voice.append("Saved activity is unavailable on this installation.")
@@ -1612,7 +1733,11 @@ elif st.session_state.page == "history":
             history_voice.append(tr("no_history", language))
         else:
             for entry in history_rows:
-                title = entry.get("entry_type", "Activity").title()
+                title = {
+                    "field suitability": tr("activity_field", language),
+                    "crop finder": tr("activity_crops", language),
+                    "leaf screening": tr("activity_leaf", language),
+                }.get(entry.get("entry_type"), entry.get("entry_type", "Activity").title())
                 st.markdown(f"### {title}")
                 details = [entry.get("created_at", "")]
                 if entry.get("crop"):
@@ -1632,29 +1757,21 @@ elif st.session_state.page == "history":
 elif st.session_state.page == "share":
 
     st.subheader(tr("share_title", language))
-    st.write("Create a QR code for a public Terrasense deployment. QR generation happens locally in this app.")
-    public_url = st.text_input(
-        tr("public_url", language),
-        value=os.environ.get("APP_PUBLIC_URL", ""),
-        placeholder="https://your-app.streamlit.app",
-    ).strip()
-    if public_url:
-        from urllib.parse import urlparse
-
-        parsed_url = urlparse(public_url)
-        if parsed_url.scheme != "https" or not parsed_url.netloc:
-            st.error("Enter a complete HTTPS URL for the deployed app.")
-        else:
-            qr_image = qrcode.make(public_url)
-            qr_buffer = io.BytesIO()
-            qr_image.save(qr_buffer, format="PNG")
-            qr_bytes = qr_buffer.getvalue()
-            st.image(qr_bytes, caption=tr("scan_qr", language), width=240)
-            st.download_button(tr("download_qr", language), qr_bytes, file_name="terrasense-app-qr.png", mime="image/png")
-    else:
-        st.info(tr("qr_missing", language))
-    share_voice = tr("share_title", language) + ". " + tr("public_url", language) + ". "
-    share_voice += public_url if public_url else tr("qr_missing", language)
+    st.write(tr("share_description", language))
+    public_url = str(st.context.url).strip()
+    qr_image = qrcode.make(public_url)
+    qr_buffer = io.BytesIO()
+    qr_image.save(qr_buffer, format="PNG")
+    qr_bytes = qr_buffer.getvalue()
+    st.image(qr_bytes, caption=tr("scan_qr", language), width=240)
+    st.download_button(
+        tr("download_qr", language),
+        qr_bytes,
+        file_name="terrasense-app-qr.png",
+        mime="image/png",
+    )
+    render_copy_link_button(public_url)
+    share_voice = tr("share_description", language) + " " + public_url
     render_voice_button(share_voice)
 
 elif st.session_state.page == "impact":
@@ -1736,11 +1853,11 @@ elif st.session_state.page == "impact":
             """
         )
 
-    sdg_voice = ". ".join(f"UN Sustainable Development Goal {number}: {title}" for number, title, _ in sdg_goals)
     render_voice_button(
-        "Terrasense helps farmers compare field conditions and crop options. "
-        + sdg_voice
-        + ". The app uses public climate, soil, terrain, and map information. The leaf model only covers its trained crop classes. "
+        tr("impact_voice", language)
+        + ". "
+        + tr("sdg_title", language)
+        + ". "
         + tr("privacy_body", language)
         + " " + tr("terms_body", language)
         + " " + tr("offline_detail", language)
