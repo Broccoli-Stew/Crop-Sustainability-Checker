@@ -6,4 +6,6 @@ The Google sign-in option has been removed. If your repository still contains .s
 
 The leaf screen parses all model classes, including natural-language disease labels such as "Corn (Maize) with Northern Leaf Blight". It ranks the selected crop's disease classes and reports overall crop support separately so a one-class filter cannot imply 100% confidence.
 
-Croppy offers Gemini Cloud and local Ollama modes. Follow the Croppy setup section in README.md; keep API keys in Streamlit secrets and out of the repository.
+The Plant Doctor page has an on/off camera toggle. The planting map and field map use the Terrasense logo for selected points.
+
+Crop suitability options include additional crops from multiple world regions. Their climate and soil bands are broad screening estimates; confirm local varieties and conditions.

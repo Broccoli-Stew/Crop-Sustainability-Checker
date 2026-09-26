@@ -9,16 +9,17 @@ Built for Reboot the Earth 2026, Challenge 1, Team 17.
 - Coordinate-based field map with climate, soil pH, elevation, and a rough nearby slope estimate.
 - Interactive world maps for field assessment and planting plans, with optional browser location at startup and manual point clearing.
 - Crop suitability screening with visible factor scores and assumptions.
-- A starter companion-planting planner with references and site-fit checks.
+- A wider set of crop options representing farming regions across Africa, Asia, the Pacific, Europe, and the Americas, plus a starter companion-planting planner with references and site-fit checks.
 - Crop-specific leaf photo screening for classes supported by the model, with general low-cost first steps.
-- Croppy agriculture chat with a cloud Gemini mode and an offline Ollama mode, grounded in the app's crop ranges, first-step guidance, and cited companion-planting references.
+- An on/off camera control on the leaf-screening page, alongside photo upload.
+- Matching Terrasense logo pins on both maps.
 - Optional account registration, salted password hashes, local activity history, and cached point data.
 - Voice readout using the browser’s speech support.
 - Core navigation and guidance in Arabic, Chinese, English, French, Russian, and Spanish.
 - Automatic QR-code generation for the address currently opening the app, plus a Copy link button.
 - Draft privacy and terms copy, plus relevant UN Sustainable Development Goals.
 
-The app is a decision-support prototype. Its crop screen does not predict yield, its leaf model does not provide a confirmed diagnosis, and Croppy can make mistakes. None of these replace local agricultural advice.
+The app is a decision-support prototype. Its crop screen does not predict yield and its leaf model does not provide a confirmed diagnosis. These screens do not replace local agricultural advice.
 
 ## Run locally
 
@@ -39,19 +40,7 @@ The first online leaf screening downloads the open-source model. Once the model 
 - The Share page detects the URL currently used to open the app and generates its QR code automatically; no URL setting or manual paste is needed. Use the Copy link button to put that same address on the clipboard.
 - `TERRASENSE_DB_PATH`: optional path for the SQLite database. By default, the app creates `terrasense.db` beside `app.py`. Existing `cropwise.db` files and the older `CROPWISE_DB_PATH` setting remain recognized so saved local history can continue to work.
 
-## Croppy setup
-
-Croppy has two answer modes. Cloud mode uses Gemini and works on a hosted Streamlit app when the server has internet access. Add `GEMINI_API_KEY` to Streamlit Community Cloud's app Secrets, or to the server environment when running locally. Create the key in [Google AI Studio](https://aistudio.google.com/app/apikey). For Streamlit Community Cloud, add a line like this in the app's Settings → Secrets:
-
-```toml
-GEMINI_API_KEY = "paste-your-key-here"
-```
-
-The default model is `gemini-3.5-flash`; `CROPPY_GEMINI_MODEL` can select another available model. Google currently lists a free tier for selected models, with usage limits; [pricing and quotas can change](https://ai.google.dev/gemini-api/docs/pricing), and paid API projects can incur charges. On Google's free tier, submitted content may be used to improve its products.
-
-Local mode calls an Ollama server on the same machine that runs Streamlit. Install [Ollama](https://ollama.com/download), then run `ollama run qwen2.5:7b` once to download the model. After that download, local chat can run without internet if Ollama is running. Set `CROPPY_OLLAMA_MODEL` or `CROPPY_OLLAMA_URL` to use a different local model or endpoint. On Streamlit hosting, `localhost` means the hosting server, not your personal computer; local mode works there only if Ollama is installed and running on that server.
-
-Do not commit API keys or a real `.streamlit/secrets.toml` file. Cloud Croppy sends the question, recent chat, and short text summaries of relevant app results to Google Gemini; it does not send the uploaded leaf image. Local mode sends prompts to the configured Ollama endpoint. Chat is kept in Streamlit session state and is not written to the activity database.
+Crop ranges are broad screening estimates rather than location-specific prescriptions. The added global examples use the optimal environmental bands in FAO EcoCrop records where available. The FAO describes EcoCrop as a crop database of environmental descriptors and makes it available through the GAEZ platform; variety, season, irrigation, and local conditions still matter.
 
 The database stores usernames, salted password hashes, saved history, and cached field values. Uploaded leaf images are not written to the database. A hosted installation needs persistent, access-controlled storage for durable account history. Treat the local account flow as a prototype until production security, backups, password recovery, and retention policies are reviewed.
 
@@ -64,6 +53,7 @@ The app needs no paid API key. It uses:
 - [OpenStreetMap](https://www.openstreetmap.org/copyright) map tiles.
 - [Open-Meteo Elevation API](https://open-meteo.com/en/docs/elevation-api) using the Copernicus GLO-90 elevation model.
 - [PlantVillage](https://huggingface.co/datasets) labels and a MobileNetV2 model hosted on Hugging Face.
+- [FAO EcoCrop](https://www.fao.org/geospatial/data-and-tools/data-portals/ecocrop/) environmental descriptors for selected added crop examples.
 
 Live map tiles and climate, soil, and elevation refreshes require an internet connection. Offline mode uses saved values for an exact coordinate or values entered by the user. The offline map has no basemap. A fully disconnected first-time setup requires preloading the model and any field data the user needs. Open-Meteo and each data provider’s terms and attribution requirements apply; confirm them before commercial deployment.
 

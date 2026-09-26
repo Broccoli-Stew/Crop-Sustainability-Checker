@@ -539,6 +539,15 @@ CROP_THRESHOLDS = {
     "Teff": {"temp_c": (10, 27), "rain_mm": (400, 900), "ph": (5.5, 7.5), "notes": "Small-grain cereal grown across varied elevations; confirm local cultivar ranges."},
     "Yam": {"temp_c": (20, 32), "rain_mm": (1000, 1800), "ph": (5.5, 7.5), "notes": "Tropical tuber crop that needs a warm, long growing season and well-drained soil."},
     "Zucchini": {"temp_c": (18, 32), "rain_mm": (450, 900), "ph": (6.0, 7.5), "notes": "Warm-season squash that needs regular moisture and frost-free conditions."},
+    "Bambara Groundnut": {"temp_c": (19, 30), "rain_mm": (750, 1400), "ph": (5.0, 6.5), "notes": "A pulse from West Africa adapted to relatively poor soils; FAO EcoCrop screening band. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=10830)."},
+    "Breadfruit": {"temp_c": (21, 33), "rain_mm": (1500, 3000), "ph": (5.5, 6.5), "notes": "A warm, humid tropical tree crop with Polynesian origins; young trees need protection and moisture. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=3423)."},
+    "Durian": {"temp_c": (22, 40), "rain_mm": (1500, 2500), "ph": (5.0, 6.5), "notes": "A humid tropical Southeast Asian fruit tree; sensitive to drought and wind. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=963)."},
+    "Enset": {"temp_c": (16, 24), "rain_mm": (1100, 1500), "ph": (5.6, 7.3), "notes": "An East African perennial staple, especially important in Ethiopia; elevation and cultivar strongly affect growth. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=5700)."},
+    "Fonio": {"temp_c": (22, 27), "rain_mm": (900, 1600), "ph": (5.5, 6.5), "notes": "A short-season West African cereal suited to warm savanna conditions. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=5329)."},
+    "Kiwifruit": {"temp_c": (21, 30), "rain_mm": (900, 1300), "ph": (6.0, 7.0), "notes": "Native to China and grown in temperate regions; many cultivars need winter chilling and frost protection. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=889)."},
+    "Lychee": {"temp_c": (20, 35), "rain_mm": (1000, 1700), "ph": (5.5, 6.5), "notes": "A subtropical fruit tree from southern China; seasonal conditions for flowering vary by cultivar. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=1357)."},
+    "Moringa": {"temp_c": (20, 35), "rain_mm": (700, 2200), "ph": (5.5, 7.0), "notes": "A drought-tolerant food tree native to South Asia and widely grown in tropical regions; avoid waterlogged soil. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=2348)."},
+    "Mung Bean": {"temp_c": (21, 36), "rain_mm": (650, 900), "ph": (5.5, 6.2), "notes": "A warm-season pulse originating in South or Southeast Asia; excessive rain near flowering can reduce yields. [Reference](https://ecocrop.apps.fao.org/ecocrop/srv/en/dataSheet?id=2150)."},
 }
 
 
