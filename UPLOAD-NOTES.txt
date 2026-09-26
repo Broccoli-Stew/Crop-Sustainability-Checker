@@ -4,4 +4,6 @@ Replace the matching files in your repository with these files and keep the asse
 
 The Google sign-in option has been removed. If your repository still contains .streamlit/secrets.toml.example, delete that obsolete sample file. Do not upload a real secrets.toml file.
 
-The leaf screen now checks the selected crop against the model's actual class labels. For unsupported crops, it shows an explanatory message instead of forcing a disease match. It also filters supported predictions to the selected crop.
+The leaf screen parses all model classes, including natural-language disease labels such as "Corn (Maize) with Northern Leaf Blight". It ranks the selected crop's disease classes and reports overall crop support separately so a one-class filter cannot imply 100% confidence.
+
+Croppy offers Gemini Cloud and local Ollama modes. Follow the Croppy setup section in README.md; keep API keys in Streamlit secrets and out of the repository.

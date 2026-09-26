@@ -1,6 +1,7 @@
 import html
 import io
 import json
+import os
 import textwrap
 from pathlib import Path
 
@@ -20,6 +21,14 @@ from crop_data import (
 from data_sources import fetch_climate, fetch_soil, fetch_terrain
 from suitability import evaluate, get_factor_scores
 from disease_model import load_model, predict, supported_plant_names, supports_plant
+from croppy_agent import (
+    DEFAULT_GEMINI_MODEL,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OLLAMA_URL,
+    ask_croppy,
+    build_knowledge_context,
+    build_system_prompt,
+)
 from localization import LANGUAGES, t as tr
 from local_store import (
     authenticate,
@@ -40,10 +49,19 @@ from polyculture import recommendations
 
 APP_DIR = Path(__file__).resolve().parent
 LOGO_PATH = APP_DIR / "assets" / "terrasense-logo.png"
+FAVICON_PATH = APP_DIR / "assets" / "terrasense-favicon.png"
+if FAVICON_PATH.is_file():
+    with Image.open(FAVICON_PATH) as favicon_file:
+        FAVICON_IMAGE = favicon_file.convert("RGBA")
+elif LOGO_PATH.is_file():
+    with Image.open(LOGO_PATH) as favicon_file:
+        FAVICON_IMAGE = favicon_file.convert("RGBA")
+else:
+    FAVICON_IMAGE = ":material/eco:"
 
 st.set_page_config(
     page_title="Terrasense | Field planning companion",
-    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else ":material/eco:",
+    page_icon=FAVICON_IMAGE,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -122,6 +140,18 @@ if "crop_results" not in st.session_state:
 
 if "disease_results" not in st.session_state:
     st.session_state.disease_results = None
+
+if "croppy_open" not in st.session_state:
+    st.session_state.croppy_open = False
+
+if "croppy_provider" not in st.session_state:
+    st.session_state.croppy_provider = "cloud"
+
+if "croppy_messages" not in st.session_state:
+    st.session_state.croppy_messages = []
+
+if "croppy_last_error" not in st.session_state:
+    st.session_state.croppy_last_error = None
 
 if "last_map_click" not in st.session_state:
     st.session_state.last_map_click = None
@@ -235,12 +265,13 @@ def field_result_summary(crop, verdict, score, factors=None, language="en"):
     return tr(template_key, language).format(crop=crop, score=score_percent(score))
 
 
-def leaf_result_summary(plant, disease, match_score, language="en"):
-    """Describe the model's crop-specific class without presenting it as a diagnosis."""
+def leaf_result_summary(plant, disease, match_score, crop_probability, language="en"):
+    """Describe crop-ranked and whole-model support without presenting a diagnosis."""
     return tr("disease_result", language).format(
         plant=plant,
         disease=disease,
-        score=f"{match_score * 100:.1f}",
+        score=model_probability_label(match_score),
+        crop_support=model_probability_label(crop_probability),
     )
 
 
@@ -583,6 +614,71 @@ def render_copy_link_button(url):
     )
 
 
+def croppy_setting(name, default=""):
+    """Read a provider setting from the process environment or Streamlit secrets."""
+    environment_value = os.environ.get(name)
+    if environment_value:
+        return environment_value
+    try:
+        return str(st.secrets.get(name, default) or default)
+    except Exception:
+        return default
+
+
+def model_probability_label(probability):
+    if probability is None:
+        return "Unavailable"
+    percent = max(0.0, float(probability) * 100)
+    return "<0.1%" if percent < 0.1 else f"{percent:.1f}%"
+
+
+def croppy_screen_context():
+    """Share only short text summaries of the current result, never uploaded images."""
+    sections = []
+    disease_results = st.session_state.get("disease_results") or []
+    if st.session_state.get("page") == "doctor" and disease_results:
+        result = disease_results[0]
+        if result.get("unsupported_crop"):
+            sections.append(
+                f"The current leaf screen says the selected crop {result.get('plant')} "
+                "is not supported by the image model."
+            )
+        else:
+            support = model_probability_label(result.get("crop_probability"))
+            class_score = model_probability_label(result.get("confidence"))
+            sections.append(
+                f"The current leaf screen's top crop-specific class is "
+                f"{result.get('disease')} on {result.get('plant')}; its score within "
+                f"that crop's labels is {class_score}, and overall model support for "
+                f"the crop is {support}. This is not a confirmed diagnosis."
+            )
+    analysis = st.session_state.get("analysis")
+    if analysis and st.session_state.get("page") == "map":
+        sections.append(
+            f"The current field screen is for {analysis.get('crop')} and its broad "
+            f"suitability verdict is {analysis.get('verdict')}. No exact coordinates are included."
+        )
+    return " ".join(sections)
+
+
+def croppy_reply(prompt, language):
+    language_name = next(
+        (name for name, code in LANGUAGES.items() if code == language), "English"
+    )
+    knowledge = build_knowledge_context(prompt, croppy_screen_context())
+    system_prompt = build_system_prompt(language_name, knowledge)
+    return ask_croppy(
+        provider=st.session_state.croppy_provider,
+        prompt=prompt,
+        history=st.session_state.croppy_messages,
+        system_prompt=system_prompt,
+        api_key=croppy_setting("GEMINI_API_KEY"),
+        gemini_model=croppy_setting("CROPPY_GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+        ollama_url=croppy_setting("CROPPY_OLLAMA_URL", DEFAULT_OLLAMA_URL),
+        ollama_model=croppy_setting("CROPPY_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+    )
+
+
 # ============================================================
 # CUSTOM CSS
 # ============================================================
@@ -661,6 +757,17 @@ render_html(
         border-color: var(--app-border) !important;
     }}
     [data-testid="stBaseButton-primary"] {{ background-color: var(--app-accent) !important; color: #ffffff !important; }}
+    .st-key-croppy_launcher {{
+        position: fixed; left: .75rem; bottom: .75rem;
+        width: min(18rem, calc(100vw - 1.5rem)); z-index: 999998;
+    }}
+    .st-key-croppy_panel {{
+        position: fixed !important; top: .75rem; bottom: .75rem; left: .75rem;
+        width: min(390px, calc(100vw - 1.5rem)); overflow-y: auto;
+        z-index: 999999; padding: 1rem; border: 1px solid var(--app-border);
+        border-radius: 16px; background: var(--app-page) !important;
+        box-shadow: 0 10px 36px rgba(0, 0, 0, .35);
+    }}
     .block-container {{ padding-top: 1.5rem; padding-bottom: 2rem; max-width: 1400px; }}
     .hero {{
         padding: 1.3rem 1.5rem; border-radius: 18px;
@@ -760,7 +867,6 @@ with st.sidebar:
         "Reboot the Earth 2026\n\n"
         "Challenge 1 • Team 17"
     )
-
 
 # ============================================================
 # HERO
@@ -1623,7 +1729,12 @@ elif st.session_state.page == "doctor":
                                 crop=doctor_crop if best.get("unsupported_crop") else best.get("plant"),
                                 outcome="Model does not cover selected crop" if best.get("unsupported_crop") else best.get("disease"),
                                 score=best.get("confidence"),
-                                details={"image_saved": False, "unsupported_crop": bool(best.get("unsupported_crop"))},
+                                details={
+                                    "image_saved": False,
+                                    "unsupported_crop": bool(best.get("unsupported_crop")),
+                                    "crop_probability": best.get("crop_probability"),
+                                    "global_class_probability": best.get("global_confidence"),
+                                },
                             )
 
                         except Exception:
@@ -1667,9 +1778,20 @@ elif st.session_state.page == "doctor":
             plant = best["plant"]
             confidence = best["confidence"]
             is_uncertain_crop = best.get("uncertain_crop", False)
+            crop_probability = best.get("crop_probability")
+            low_crop_support = best.get("low_crop_support", False)
 
             st.subheader("Plain-language result")
-            if disease == "Unknown" or plant == "Unknown crop":
+            if low_crop_support:
+                result_text = tr("disease_weak_support", language).format(
+                    plant=best.get("selected_crop", plant),
+                    overall_disease=best.get("overall_disease", "Unknown"),
+                    overall_plant=best.get("overall_plant", "Unknown crop"),
+                    overall_score=model_probability_label(best.get("overall_confidence")),
+                    disease=disease,
+                    score=model_probability_label(confidence),
+                )
+            elif disease == "Unknown" or plant == "Unknown crop":
                 result_text = tr("disease_unknown", language)
             elif is_uncertain_crop:
                 result_text = tr("disease_uncertain", language).format(
@@ -1677,15 +1799,31 @@ elif st.session_state.page == "doctor":
                     plant=plant,
                 )
             else:
-                result_text = leaf_result_summary(plant, disease, confidence, language)
+                result_text = leaf_result_summary(
+                    plant, disease, confidence, crop_probability, language
+                )
             st.write(result_text)
 
             if disease != "Unknown" and plant != "Unknown crop":
-                st.metric("Model class score", f"{confidence * 100:.1f}%")
-                st.caption("This is the model's overall class probability, not diagnostic certainty. The result list is filtered to the selected crop.")
+                if is_uncertain_crop:
+                    st.metric("Overall model class probability", model_probability_label(confidence))
+                else:
+                    score_col, support_col = st.columns(2)
+                    score_col.metric(
+                        tr("disease_class_score", language),
+                        model_probability_label(confidence),
+                    )
+                    support_col.metric(
+                        tr("disease_crop_support", language),
+                        model_probability_label(crop_probability),
+                    )
+                    st.caption(tr("disease_score_note", language))
 
             st.subheader(tr("treatment_title", language))
-            if disease == "Unknown":
+            if low_crop_support:
+                treatment_text = tr("disease_weak_treatment", language)
+                st.info(treatment_text)
+            elif disease == "Unknown":
                 treatment_text = tr("disease_unknown", language)
                 st.info(treatment_text)
             else:
@@ -1703,10 +1841,13 @@ elif st.session_state.page == "doctor":
                 )
             )
 
-            if len(disease_results) > 1:
+            if len(disease_results) > 1 and not low_crop_support:
                 with st.expander("Other possibilities"):
                     for result in disease_results[1:]:
-                        st.write(f"{result['plant']} — {result['disease']} ({result['confidence'] * 100:.1f}%)")
+                        st.write(
+                            f"{result['plant']} — {result['disease']} "
+                            f"({model_probability_label(result['confidence'])})"
+                        )
     else:
         render_voice_button(tr("doctor_intro", language) + " " + tr("screening_warning", language))
 
@@ -1806,6 +1947,8 @@ elif st.session_state.page == "impact":
     with st.container(border=True):
         st.markdown(f"#### {tr('privacy_title', language)}")
         st.write(tr("privacy_body", language))
+        st.write(tr("croppy_cloud_privacy", language))
+        st.write(tr("croppy_local_privacy", language))
     with st.container(border=True):
         st.markdown(f"#### {tr('terms_title', language)}")
         st.write(tr("terms_body", language))
@@ -1824,7 +1967,8 @@ elif st.session_state.page == "impact":
             - **Open-Meteo Elevation API / Copernicus GLO-90** — terrain elevation and rough slope estimate; attribution required
             - **PlantVillage** — source dataset for the leaf screening model
             - **Hugging Face** — model files; download once before offline use
-            - **Free to run without paid API keys**; hosting and device costs depend on deployment
+            - **Croppy** — optional Gemini Cloud API or a local Ollama model; cloud limits and pricing depend on the Google API project
+            - **Core field features** run without paid API keys; hosting and device costs depend on deployment
             """
         )
 
@@ -1875,3 +2019,87 @@ st.caption(
     "Terrasense • Reboot the Earth 2026 • "
     "Challenge 1 • Team 17"
 )
+
+if st.session_state.croppy_open:
+    with st.container(key="croppy_panel", border=True):
+        header_col, close_col = st.columns([5, 1])
+        with header_col:
+            st.markdown(f"### {tr('croppy_title', language)}")
+        with close_col:
+            if st.button("×", key="croppy_close_button", help=tr("croppy_close", language)):
+                st.session_state.croppy_open = False
+                st.rerun()
+
+        st.caption(tr("croppy_intro", language))
+        st.selectbox(
+            tr("croppy_mode", language),
+            options=["cloud", "local"],
+            format_func=lambda provider: tr(
+                "croppy_cloud" if provider == "cloud" else "croppy_local", language
+            ),
+            key="croppy_provider",
+        )
+
+        if st.session_state.croppy_provider == "cloud":
+            st.caption(tr("croppy_cloud_privacy", language))
+            if st.session_state.offline_mode:
+                st.warning(tr("croppy_cloud_offline", language))
+            if not croppy_setting("GEMINI_API_KEY"):
+                st.info(tr("croppy_setup_cloud", language))
+                st.markdown("[Google AI Studio · create an API key](https://aistudio.google.com/app/apikey)")
+            st.caption("[Gemini API pricing and limits](https://ai.google.dev/gemini-api/docs/pricing)")
+        else:
+            st.caption(tr("croppy_local_privacy", language))
+            st.info(tr("croppy_setup_local", language))
+            st.markdown("[Ollama download](https://ollama.com/download)")
+
+        with st.container(height=360, border=True):
+            if not st.session_state.croppy_messages:
+                st.caption(tr("croppy_intro", language))
+            for chat_message in st.session_state.croppy_messages:
+                with st.chat_message(chat_message["role"]):
+                    st.markdown(chat_message["content"])
+
+        if st.session_state.croppy_last_error:
+            st.error(st.session_state.croppy_last_error)
+        st.caption(tr("croppy_disclaimer", language))
+
+        with st.form("croppy_chat_form", clear_on_submit=True):
+            prompt = st.text_input(
+                tr("croppy_placeholder", language),
+                key="croppy_prompt_input",
+                label_visibility="collapsed",
+            )
+            submitted = st.form_submit_button(
+                tr("croppy_send", language), use_container_width=True
+            )
+        if submitted and prompt.strip():
+            st.session_state.croppy_messages.append(
+                {"role": "user", "content": prompt.strip()}
+            )
+            try:
+                with st.spinner(tr("croppy_thinking", language)):
+                    answer = croppy_reply(prompt.strip(), language)
+                st.session_state.croppy_messages.append(
+                    {"role": "assistant", "content": answer}
+                )
+                st.session_state.croppy_last_error = None
+            except Exception as error:
+                st.session_state.croppy_last_error = (
+                    f"{tr('croppy_error', language)} {error}"
+                )
+            st.session_state.croppy_messages = st.session_state.croppy_messages[-24:]
+            st.rerun()
+
+        if st.button(tr("croppy_clear", language), key="croppy_clear_button"):
+            st.session_state.croppy_messages = []
+            st.session_state.croppy_last_error = None
+            st.rerun()
+elif st.button(
+    tr("croppy_button", language),
+    key="croppy_launcher",
+    use_container_width=True,
+    type="primary",
+):
+    st.session_state.croppy_open = True
+    st.rerun()

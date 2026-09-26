@@ -11,13 +11,14 @@ Built for Reboot the Earth 2026, Challenge 1, Team 17.
 - Crop suitability screening with visible factor scores and assumptions.
 - A starter companion-planting planner with references and site-fit checks.
 - Crop-specific leaf photo screening for classes supported by the model, with general low-cost first steps.
+- Croppy agriculture chat with a cloud Gemini mode and an offline Ollama mode, grounded in the app's crop ranges, first-step guidance, and cited companion-planting references.
 - Optional account registration, salted password hashes, local activity history, and cached point data.
 - Voice readout using the browser’s speech support.
 - Core navigation and guidance in Arabic, Chinese, English, French, Russian, and Spanish.
-- Local QR-code generation for a configured public deployment URL.
+- Automatic QR-code generation for the address currently opening the app, plus a Copy link button.
 - Draft privacy and terms copy, plus relevant UN Sustainable Development Goals.
 
-The app is a decision-support prototype. Its crop screen does not predict yield, and its leaf model does not provide a confirmed diagnosis or replace local agricultural advice.
+The app is a decision-support prototype. Its crop screen does not predict yield, its leaf model does not provide a confirmed diagnosis, and Croppy can make mistakes. None of these replace local agricultural advice.
 
 ## Run locally
 
@@ -31,12 +32,26 @@ The app is a decision-support prototype. Its crop screen does not predict yield,
    streamlit run app.py
    ```
 
-The first online leaf screening downloads the open-source model. Once the model is present in the local Hugging Face cache, Offline mode can use it without downloading files. The model card describes 38 PlantVillage classes; the app checks the selected crop against those labels, uses the model's saved image processor, and preserves each class probability across all model classes when filtering to a crop. Unsupported crops are not forced into a result. A displayed class score is not diagnostic certainty. See the [model card](https://huggingface.co/linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification).
+The first online leaf screening downloads the open-source model. Once the model is present in the local Hugging Face cache, Offline mode can use it without downloading files. The model card describes 38 PlantVillage classes. The app parses the model's natural-language class labels, ranks every supported disease class for the selected crop, and shows that crop's total model support separately. Unsupported crops are not forced into a result. Neither score is diagnostic certainty. See the [model card](https://huggingface.co/linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification).
 
 ## Configuration
 
 - The Share page detects the URL currently used to open the app and generates its QR code automatically; no URL setting or manual paste is needed. Use the Copy link button to put that same address on the clipboard.
 - `TERRASENSE_DB_PATH`: optional path for the SQLite database. By default, the app creates `terrasense.db` beside `app.py`. Existing `cropwise.db` files and the older `CROPWISE_DB_PATH` setting remain recognized so saved local history can continue to work.
+
+## Croppy setup
+
+Croppy has two answer modes. Cloud mode uses Gemini and works on a hosted Streamlit app when the server has internet access. Add `GEMINI_API_KEY` to Streamlit Community Cloud's app Secrets, or to the server environment when running locally. Create the key in [Google AI Studio](https://aistudio.google.com/app/apikey). For Streamlit Community Cloud, add a line like this in the app's Settings → Secrets:
+
+```toml
+GEMINI_API_KEY = "paste-your-key-here"
+```
+
+The default model is `gemini-3.5-flash`; `CROPPY_GEMINI_MODEL` can select another available model. Google currently lists a free tier for selected models, with usage limits; [pricing and quotas can change](https://ai.google.dev/gemini-api/docs/pricing), and paid API projects can incur charges. On Google's free tier, submitted content may be used to improve its products.
+
+Local mode calls an Ollama server on the same machine that runs Streamlit. Install [Ollama](https://ollama.com/download), then run `ollama run qwen2.5:7b` once to download the model. After that download, local chat can run without internet if Ollama is running. Set `CROPPY_OLLAMA_MODEL` or `CROPPY_OLLAMA_URL` to use a different local model or endpoint. On Streamlit hosting, `localhost` means the hosting server, not your personal computer; local mode works there only if Ollama is installed and running on that server.
+
+Do not commit API keys or a real `.streamlit/secrets.toml` file. Cloud Croppy sends the question, recent chat, and short text summaries of relevant app results to Google Gemini; it does not send the uploaded leaf image. Local mode sends prompts to the configured Ollama endpoint. Chat is kept in Streamlit session state and is not written to the activity database.
 
 The database stores usernames, salted password hashes, saved history, and cached field values. Uploaded leaf images are not written to the database. A hosted installation needs persistent, access-controlled storage for durable account history. Treat the local account flow as a prototype until production security, backups, password recovery, and retention policies are reviewed.
 

@@ -91,6 +91,10 @@ def predict(image: Image.Image, model, top_k: int = 3, plant_filter: str | None 
     logits = outputs.logits[0]
     class_labels = _class_labels(model)
     class_indices = list(range(len(class_labels)))
+    probabilities = F.softmax(logits.float(), dim=-1)
+    overall_index = int(torch.argmax(probabilities).item())
+    overall_plant, overall_disease = _parse_label(class_labels[overall_index])
+    overall_confidence = float(probabilities[overall_index].item())
 
     if plant_filter:
         class_indices = [
@@ -100,13 +104,34 @@ def predict(image: Image.Image, model, top_k: int = 3, plant_filter: str | None 
         ]
         if not class_indices:
             raise ValueError(f"The model has no trained labels for {plant_filter}.")
-    probabilities = F.softmax(logits, dim=-1)
     selected_probabilities = probabilities[class_indices]
+    crop_probability = (
+        float(selected_probabilities.sum().item()) if plant_filter else None
+    )
 
-    k = min(top_k, selected_probabilities.shape[0])
+    if plant_filter and crop_probability == 0.0:
+        return [{
+            "plant": plant_filter,
+            "disease": "Unknown",
+            "raw_label": "",
+            "confidence": 0.0,
+            "global_confidence": 0.0,
+            "crop_probability": 0.0,
+            "overall_plant": overall_plant,
+            "overall_disease": overall_disease,
+            "overall_confidence": overall_confidence,
+            "low_crop_support": True,
+        }]
+
+    if plant_filter:
+        ranked_probabilities = selected_probabilities / crop_probability
+    else:
+        ranked_probabilities = selected_probabilities
+
+    k = min(top_k, ranked_probabilities.shape[0])
 
     top_probs, top_idxs = torch.topk(
-        selected_probabilities,
+        ranked_probabilities,
         k=k,
     )
 
@@ -120,13 +145,31 @@ def predict(image: Image.Image, model, top_k: int = 3, plant_filter: str | None 
         raw_label = class_labels[index]
 
         plant, disease = _parse_label(raw_label)
+        result_crop_probability = crop_probability
+        if not plant_filter:
+            result_crop_indices = [
+                label_index
+                for label_index, label in enumerate(class_labels)
+                if _crop_match_key(_parse_label(label)[0]) == _crop_match_key(plant)
+            ]
+            result_crop_probability = float(
+                probabilities[result_crop_indices].sum().item()
+            ) if result_crop_indices else 0.0
 
         results.append(
             {
                 "plant": plant,
                 "disease": disease,
                 "raw_label": raw_label,
-                "confidence": probability,
+                "confidence": float(probability),
+                "global_confidence": float(probabilities[index].item()),
+                "crop_probability": result_crop_probability,
+                "overall_plant": overall_plant,
+                "overall_disease": overall_disease,
+                "overall_confidence": overall_confidence,
+                "low_crop_support": bool(
+                    plant_filter and result_crop_probability < 0.001
+                ),
             }
         )
 
@@ -166,6 +209,31 @@ def _parse_label(raw_label: str):
             return healthy_first.group(1).strip(), "Healthy"
         if healthy_last:
             return healthy_last.group(1).strip(), "Healthy"
+        natural_lower = natural_label.casefold()
+        if natural_lower == "cedar apple rust":
+            return "Apple", "Cedar Apple Rust"
+
+        plant_prefixes = (
+            "Corn (Maize)", "Bell Pepper", "Apple", "Blueberry", "Cherry",
+            "Grape", "Orange", "Peach", "Potato", "Raspberry", "Soybean",
+            "Squash", "Strawberry", "Tomato",
+        )
+        for plant_name in plant_prefixes:
+            match = re.fullmatch(
+                rf"{re.escape(plant_name)}\s+(?:with\s+)?(.+)",
+                natural_label,
+                flags=re.IGNORECASE,
+            )
+            if not match:
+                continue
+            disease_name = match.group(1).strip()
+            if plant_name == "Apple" and disease_name.casefold() == "scab":
+                disease_name = "Apple Scab"
+            if plant_name == "Tomato" and disease_name.casefold() in {
+                "yellow leaf curl virus", "mosaic virus"
+            }:
+                disease_name = f"Tomato {disease_name}"
+            return plant_name, disease_name.title()
         return "Unknown crop", "Unknown"
 
     plant = plant_raw.replace("_", " ").replace("(", "").replace(")", "").strip()
